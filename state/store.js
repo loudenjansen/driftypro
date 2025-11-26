@@ -1,5 +1,9 @@
 import { storage } from './storage.js'
 import { logSupabaseEvent } from '../debug/supabaseDebug.js'
+// NIEUW: Importeer de API-helpers (waar onze RPC-wrappers zitten)
+import { api } from '../lib/api.js' 
+// NIEUW: Importeer de Supabase client (nodig voor data-selectie en Realtime)
+import { supabase } from '../supabase/api.js' // PAS DIT PAD AAN als uw Supabase client elders staat!
 
 export const STORE = {
   users: [],
@@ -26,6 +30,7 @@ export const STORE = {
   sharePrefillCode: null,
 }
 
+// NOTE: Deze functie kan worden verwijderd als de UI volledig de share_code van de DB gebruikt.
 export function generateShareCode(){
   // Random 4-digit numeric code for sharing reservations
   return String(Math.floor(1000 + Math.random() * 9000))
@@ -57,11 +62,12 @@ function ensureCrewCreation(){
 
 export function initStore(){
   ensureArrays()
+  // NOTE: Deze mock data moet idealiter worden verwijderd wanneer de app volledig live is.
   if (!STORE.boats || !STORE.boats.length){
     STORE.boats = [
-      { id:1, name:'Boot 1', x:80,  y:60,  status:'available', location:'Amsterdam' },
-      { id:2, name:'Boot 2', x:220, y:120, status:'available', location:'Rotterdam' },
-      { id:3, name:'Boot 3', x:340, y:160, status:'available', location:'Utrecht' },
+      { id:crypto.randomUUID?.() || 1, name:'Boot 1', x:80,  y:60,  status:'available', location:'Amsterdam' },
+      { id:crypto.randomUUID?.() || 2, name:'Boot 2', x:220, y:120, status:'available', location:'Rotterdam' },
+      { id:crypto.randomUUID?.() || 3, name:'Boot 3', x:340, y:160, status:'available', location:'Utrecht' },
     ]
   }
 
@@ -138,9 +144,12 @@ export function loadFromStorage(){
   if (STORE.currentUser) ensureAdminFlag(STORE.currentUser)
 }
 
+// --- GEMIGREERDE FUNCTIES (Gebruiken nu de geïmporteerde 'supabase' client) ---
+
 export async function loadBoatsFromSupabase(){
   ensureArrays()
-  const client = window?.supabaseClient
+  // Gebruik de geïmporteerde client in plaats van window?.supabaseClient
+  const client = supabase 
   if (!client){
     console.error('[supabase] loadBoats error: supabase client missing')
     logSupabaseEvent('loadBoats error', { error: 'client missing' })
@@ -150,7 +159,7 @@ export async function loadBoatsFromSupabase(){
   try {
     const { data, error } = await client
       .from('boats')
-      .select('*')
+      .select('id, name, location, city, is_active, created_at') // Selecteer alleen benodigde kolommen
       .eq('is_active', true)
       .order('created_at', { ascending: true })
     if (error) throw error
@@ -175,7 +184,8 @@ export async function loadBoatsFromSupabase(){
 
 export async function loadReservationsFromSupabase(currentUserId){
   ensureArrays()
-  const client = window?.supabaseClient
+  // Gebruik de geïmporteerde client in plaats van window?.supabaseClient
+  const client = supabase 
   if (!currentUserId || !client){
     if (!client) console.error('[supabase] loadReservations error: supabase client missing')
     if (!client) logSupabaseEvent('loadReservations error', { error: 'client missing' })
@@ -185,7 +195,8 @@ export async function loadReservationsFromSupabase(currentUserId){
   try {
     const { data, error } = await client
       .from('reservations')
-      .select('*')
+      // Belangrijk: Selecteer nu ook share_code en total_cost
+      .select('id, boat_id, start_time, end_time, status, share_code, total_cost') 
       .eq('user_id', currentUserId)
       .order('start_time', { ascending: true })
     if (error) throw error
@@ -197,9 +208,10 @@ export async function loadReservationsFromSupabase(currentUserId){
           start: row.start_time,
           end: row.end_time,
           status: row.status || 'confirmed',
-          users: [STORE.currentUser?.name].filter(Boolean),
+          users: [STORE.currentUser?.name].filter(Boolean), 
           owner: STORE.currentUser?.name || null,
-          shareCode: generateShareCode(),
+          shareCode: row.share_code, // Komt nu uit de DB
+          totalCost: row.total_cost || 0, // Komt nu uit de DB
         }))
       : []
   } catch(err){
@@ -211,42 +223,49 @@ export async function loadReservationsFromSupabase(currentUserId){
   return STORE.reservations
 }
 
-export async function createReservation({ userId, boatId, startTime, endTime }){
+/**
+ * Maakt een nieuwe reservering aan via de Supabase RPC (gebruikt api.js).
+ * De backend (RPC) handelt nu de database INSERT, share code generatie en de initiële kostenverdeling af.
+ * @param {object} params - Bevat userId, boatId, startTime, endTime, totalCost.
+ */
+export async function createReservation({ userId, boatId, startTime, endTime, totalCost }){
   ensureArrays()
-  const client = window?.supabaseClient
-  if (!client){
-    console.error('[supabase] createReservation error: supabase client missing')
-    logSupabaseEvent('createReservation error', { error: 'client missing' })
-    return null
-  }
+  
+  // 1. Roept de API helper aan (die de RPC aanroept)
   try {
-    const payload = {
-      user_id: userId,
-      boat_id: boatId,
-      start_time: startTime,
-      end_time: endTime,
-      status: 'confirmed',
+    const result = await api.createReservation({ 
+        boatId, 
+        startTime, 
+        endTime, 
+        totalCost: totalCost || 0 // totalCost is nu cruciaal voor de backend
+    });
+
+    if (!result || !result.success) {
+      throw new Error(result?.error || 'Reservering aanmaken mislukt via API.');
     }
-    const { data, error } = await client.from('reservations').insert(payload).select().single()
-    if (error) throw error
-    logSupabaseEvent('createReservation success', { id: data?.id, boatId: boatId })
-    const shareCode = generateShareCode()
+    
+    // 2. Map de RPC resultaten naar het lokale store object
     const reservation = {
-      id: data.id,
-      boatId: data.boat_id,
-      start: data.start_time,
-      end: data.end_time,
-      status: data.status || 'confirmed',
+      id: result.reservation_id,
+      boatId: boatId, // result bevat niet altijd de boatId, dus gebruik de input
+      start: startTime,
+      end: endTime,
+      status: 'confirmed', 
       users: [STORE.currentUser?.name].filter(Boolean),
       owner: STORE.currentUser?.name || null,
-      shareCode,
-    }
-    STORE.reservations.push(reservation)
-    save()
-    return reservation
+      shareCode: result.share_code, // Code komt nu van de backend
+      totalCost: totalCost || 0,
+      // newShareAmount: result.new_share_amount // Optioneel, voor weergave van de eerste kostenverdeling
+    };
+
+    // 3. Update de lokale store
+    STORE.reservations.push(reservation);
+    save();
+    logSupabaseEvent('createReservation success (via RPC)', { id: reservation.id, boatId: boatId });
+    return reservation;
   } catch(err){
-    console.error('[supabase] createReservation error', err)
-    logSupabaseEvent('createReservation error', { error: err?.message || err })
-    return null
+    console.error('[RPC] createReservation error', err);
+    logSupabaseEvent('createReservation error (RPC)', { error: err?.message || err });
+    return null;
   }
 }
