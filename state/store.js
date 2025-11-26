@@ -1,11 +1,10 @@
 import { storage } from './storage.js'
 import { logSupabaseEvent } from '../debug/supabaseDebug.js'
-// NIEUW: Importeer de API-helpers (waar onze RPC-wrappers zitten)
 import { api } from '../lib/api.js' 
-// NIEUW: Importeer de Supabase client (nodig voor data-selectie en Realtime)
-import { supabase } from '../supabase/api.js' // PAS DIT PAD AAN als uw Supabase client elders staat!
+import { supabase } from '../supabase/api.js' 
 
 export const STORE = {
+// ... (rest van de STORE structuur blijft hetzelfde)
   users: [],
   boats: [],
   reservations: [],
@@ -30,7 +29,7 @@ export const STORE = {
   sharePrefillCode: null,
 }
 
-// NOTE: Deze functie kan worden verwijderd als de UI volledig de share_code van de DB gebruikt.
+// NOTE: Deze functie kan worden verwijderd, de DB genereert nu de share code.
 export function generateShareCode(){
   // Random 4-digit numeric code for sharing reservations
   return String(Math.floor(1000 + Math.random() * 9000))
@@ -49,11 +48,11 @@ function ensureChats(){
     STORE.chats = { reservations: [], crews: [] }
   }
   if (!Array.isArray(STORE.chats.reservations)) STORE.chats.reservations = []
-  if (!Array.isArray(STORE.chats.crews)) STORE.chats.crews = []
+  if (!ArrayOf (STORE.chats.crews)) STORE.chats.crews = []
 }
 
 function ensureCrewCreation(){
-  if (!STORE.crewCreation || typeof STORE.crewCreation !== 'object' || Array.isArray(STORE.crewCreation)) {
+  if (!STORE.crewCreation || typeof STORE.crewCreation !== 'object' || ArrayOf (STORE.crewCreation)) {
     STORE.crewCreation = { nameInput: '', loading: false }
   }
   if (typeof STORE.crewCreation.nameInput !== 'string') STORE.crewCreation.nameInput = ''
@@ -61,6 +60,7 @@ function ensureCrewCreation(){
 }
 
 export function initStore(){
+// ... (rest van initStore blijft hetzelfde)
   ensureArrays()
   // NOTE: Deze mock data moet idealiter worden verwijderd wanneer de app volledig live is.
   if (!STORE.boats || !STORE.boats.length){
@@ -148,7 +148,6 @@ export function loadFromStorage(){
 
 export async function loadBoatsFromSupabase(){
   ensureArrays()
-  // Gebruik de geïmporteerde client in plaats van window?.supabaseClient
   const client = supabase 
   if (!client){
     console.error('[supabase] loadBoats error: supabase client missing')
@@ -159,7 +158,7 @@ export async function loadBoatsFromSupabase(){
   try {
     const { data, error } = await client
       .from('boats')
-      .select('id, name, location, city, is_active, created_at') // Selecteer alleen benodigde kolommen
+      .select('id, name, location, city, is_active, created_at')
       .eq('is_active', true)
       .order('created_at', { ascending: true })
     if (error) throw error
@@ -184,7 +183,6 @@ export async function loadBoatsFromSupabase(){
 
 export async function loadReservationsFromSupabase(currentUserId){
   ensureArrays()
-  // Gebruik de geïmporteerde client in plaats van window?.supabaseClient
   const client = supabase 
   if (!currentUserId || !client){
     if (!client) console.error('[supabase] loadReservations error: supabase client missing')
@@ -195,7 +193,7 @@ export async function loadReservationsFromSupabase(currentUserId){
   try {
     const { data, error } = await client
       .from('reservations')
-      // Belangrijk: Selecteer nu ook share_code en total_cost
+      // Belangrijk: Selecteer nu share_code en total_cost
       .select('id, boat_id, start_time, end_time, status, share_code, total_cost') 
       .eq('user_id', currentUserId)
       .order('start_time', { ascending: true })
@@ -228,7 +226,7 @@ export async function loadReservationsFromSupabase(currentUserId){
  * De backend (RPC) handelt nu de database INSERT, share code generatie en de initiële kostenverdeling af.
  * @param {object} params - Bevat userId, boatId, startTime, endTime, totalCost.
  */
-export async function createReservation({ userId, boatId, startTime, endTime, totalCost }){
+export async function createReservation({ boatId, startTime, endTime, totalCost }){
   ensureArrays()
   
   // 1. Roept de API helper aan (die de RPC aanroept)
@@ -237,7 +235,7 @@ export async function createReservation({ userId, boatId, startTime, endTime, to
         boatId, 
         startTime, 
         endTime, 
-        totalCost: totalCost || 0 // totalCost is nu cruciaal voor de backend
+        totalCost: totalCost || 0 
     });
 
     if (!result || !result.success) {
@@ -247,7 +245,7 @@ export async function createReservation({ userId, boatId, startTime, endTime, to
     // 2. Map de RPC resultaten naar het lokale store object
     const reservation = {
       id: result.reservation_id,
-      boatId: boatId, // result bevat niet altijd de boatId, dus gebruik de input
+      boatId: boatId, 
       start: startTime,
       end: endTime,
       status: 'confirmed', 
@@ -255,7 +253,6 @@ export async function createReservation({ userId, boatId, startTime, endTime, to
       owner: STORE.currentUser?.name || null,
       shareCode: result.share_code, // Code komt nu van de backend
       totalCost: totalCost || 0,
-      // newShareAmount: result.new_share_amount // Optioneel, voor weergave van de eerste kostenverdeling
     };
 
     // 3. Update de lokale store
