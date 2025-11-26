@@ -1,14 +1,16 @@
 import { storage } from './storage.js'
 import { logSupabaseEvent } from '../debug/supabaseDebug.js'
+// NIEUW: Importeer de API-helpers
 import { api } from '../lib/api.js' 
-import { supabase } from '../supabase/api.js' 
+// NIEUW: De supabase client is nodig voor Realtime/SELECTs
+const supabase = window.supabaseClient // Gebruik de globale of importeer als u dat prefereert: import { supabase } from '../supabase/api.js'
 
 export const STORE = {
-// ... (rest van de STORE structuur blijft hetzelfde)
   users: [],
   boats: [],
   reservations: [],
   crews: [],
+  // ... (De rest van de STORE structuur blijft hetzelfde)
   crewCreation: {
     nameInput: '',
     loading: false,
@@ -29,9 +31,8 @@ export const STORE = {
   sharePrefillCode: null,
 }
 
-// NOTE: Deze functie kan worden verwijderd, de DB genereert nu de share code.
+// Deze functie wordt nu voornamelijk door de database uitgevoerd, maar we laten hem staan als fallback/voor compatibiliteit.
 export function generateShareCode(){
-  // Random 4-digit numeric code for sharing reservations
   return String(Math.floor(1000 + Math.random() * 9000))
 }
 
@@ -48,11 +49,11 @@ function ensureChats(){
     STORE.chats = { reservations: [], crews: [] }
   }
   if (!Array.isArray(STORE.chats.reservations)) STORE.chats.reservations = []
-  if (!ArrayOf (STORE.chats.crews)) STORE.chats.crews = []
+  if (!Array.isArray(STORE.chats.crews)) STORE.chats.crews = []
 }
 
 function ensureCrewCreation(){
-  if (!STORE.crewCreation || typeof STORE.crewCreation !== 'object' || ArrayOf (STORE.crewCreation)) {
+  if (!STORE.crewCreation || typeof STORE.crewCreation !== 'object' || Array.isArray(STORE.crewCreation)) {
     STORE.crewCreation = { nameInput: '', loading: false }
   }
   if (typeof STORE.crewCreation.nameInput !== 'string') STORE.crewCreation.nameInput = ''
@@ -60,17 +61,15 @@ function ensureCrewCreation(){
 }
 
 export function initStore(){
-// ... (rest van initStore blijft hetzelfde)
   ensureArrays()
-  // NOTE: Deze mock data moet idealiter worden verwijderd wanneer de app volledig live is.
+  // NOTE: Mock data
   if (!STORE.boats || !STORE.boats.length){
     STORE.boats = [
-      { id:crypto.randomUUID?.() || 1, name:'Boot 1', x:80,  y:60,  status:'available', location:'Amsterdam' },
-      { id:crypto.randomUUID?.() || 2, name:'Boot 2', x:220, y:120, status:'available', location:'Rotterdam' },
-      { id:crypto.randomUUID?.() || 3, name:'Boot 3', x:340, y:160, status:'available', location:'Utrecht' },
+      { id:1, name:'Boot 1', x:80,  y:60,  status:'available', location:'Amsterdam' },
+      { id:2, name:'Boot 2', x:220, y:120, status:'available', location:'Rotterdam' },
+      { id:3, name:'Boot 3', x:340, y:160, status:'available', location:'Utrecht' },
     ]
   }
-
   if (!STORE.shopItems || !STORE.shopItems.length){
     STORE.shopItems = [
       { id: crypto.randomUUID?.() || 'pack-50', name:'50 punten bundel', description:'Koop direct 50 punten voor snelle reserveringen.', price: 40, reward: 50, kind:'points' },
@@ -144,11 +143,10 @@ export function loadFromStorage(){
   if (STORE.currentUser) ensureAdminFlag(STORE.currentUser)
 }
 
-// --- GEMIGREERDE FUNCTIES (Gebruiken nu de geïmporteerde 'supabase' client) ---
-
+// Functies voor data laden blijven ongewijzigd, maar gebruiken de globale client
 export async function loadBoatsFromSupabase(){
   ensureArrays()
-  const client = supabase 
+  const client = window?.supabaseClient
   if (!client){
     console.error('[supabase] loadBoats error: supabase client missing')
     logSupabaseEvent('loadBoats error', { error: 'client missing' })
@@ -158,7 +156,7 @@ export async function loadBoatsFromSupabase(){
   try {
     const { data, error } = await client
       .from('boats')
-      .select('id, name, location, city, is_active, created_at')
+      .select('*')
       .eq('is_active', true)
       .order('created_at', { ascending: true })
     if (error) throw error
@@ -183,7 +181,7 @@ export async function loadBoatsFromSupabase(){
 
 export async function loadReservationsFromSupabase(currentUserId){
   ensureArrays()
-  const client = supabase 
+  const client = window?.supabaseClient
   if (!currentUserId || !client){
     if (!client) console.error('[supabase] loadReservations error: supabase client missing')
     if (!client) logSupabaseEvent('loadReservations error', { error: 'client missing' })
@@ -193,8 +191,7 @@ export async function loadReservationsFromSupabase(currentUserId){
   try {
     const { data, error } = await client
       .from('reservations')
-      // Belangrijk: Selecteer nu share_code en total_cost
-      .select('id, boat_id, start_time, end_time, status, share_code, total_cost') 
+      .select('id, boat_id, start_time, end_time, status, share_code, total_cost') // Selecteer share_code en total_cost
       .eq('user_id', currentUserId)
       .order('start_time', { ascending: true })
     if (error) throw error
@@ -206,10 +203,10 @@ export async function loadReservationsFromSupabase(currentUserId){
           start: row.start_time,
           end: row.end_time,
           status: row.status || 'confirmed',
-          users: [STORE.currentUser?.name].filter(Boolean), 
+          users: [STORE.currentUser?.name].filter(Boolean),
           owner: STORE.currentUser?.name || null,
-          shareCode: row.share_code, // Komt nu uit de DB
-          totalCost: row.total_cost || 0, // Komt nu uit de DB
+          shareCode: row.share_code, // Haal shareCode uit de DB
+          totalCost: row.total_cost || 0, // Haal totalCost uit de DB
         }))
       : []
   } catch(err){
@@ -221,10 +218,11 @@ export async function loadReservationsFromSupabase(currentUserId){
   return STORE.reservations
 }
 
+
 /**
  * Maakt een nieuwe reservering aan via de Supabase RPC (gebruikt api.js).
- * De backend (RPC) handelt nu de database INSERT, share code generatie en de initiële kostenverdeling af.
- * @param {object} params - Bevat userId, boatId, startTime, endTime, totalCost.
+ * De backend (RPC) handelt nu de INSERT, share code generatie, en de initiële kostenverdeling af.
+ * @param {object} params - Bevat userId (niet meer nodig voor de RPC), boatId, startTime, endTime, totalCost.
  */
 export async function createReservation({ boatId, startTime, endTime, totalCost }){
   ensureArrays()
@@ -235,7 +233,7 @@ export async function createReservation({ boatId, startTime, endTime, totalCost 
         boatId, 
         startTime, 
         endTime, 
-        totalCost: totalCost || 0 
+        totalCost: totalCost || 0 // totalCost is nu cruciaal voor de backend RPC
     });
 
     if (!result || !result.success) {
@@ -244,14 +242,14 @@ export async function createReservation({ boatId, startTime, endTime, totalCost 
     
     // 2. Map de RPC resultaten naar het lokale store object
     const reservation = {
-      id: result.reservation_id,
+      id: result.reservation_id, // Krijg ID terug van RPC
       boatId: boatId, 
       start: startTime,
       end: endTime,
       status: 'confirmed', 
       users: [STORE.currentUser?.name].filter(Boolean),
       owner: STORE.currentUser?.name || null,
-      shareCode: result.share_code, // Code komt nu van de backend
+      shareCode: result.share_code, // Krijg share_code terug van RPC
       totalCost: totalCost || 0,
     };
 
