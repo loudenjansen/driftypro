@@ -9,7 +9,7 @@
     "preview": "vite preview --open"
   },
   "dependencies": {
-    // CRUCIALE TOEVOEGING: Dit lost de Rollup Fout op
+    // CRUCIALE TOEVOEGING: Dit is wat Vercel nodig heeft om te installeren.
     "@supabase/supabase-js": "^2.44.4"
   },
   "devDependencies": {
